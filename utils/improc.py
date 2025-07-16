@@ -58,7 +58,7 @@ def flow2color(flow, clip=0.0):
     flow = (flow*255.0).type(torch.ByteTensor)
     return flow
 
-COLORMAP_FILE = "./utils/bremm.png"
+COLORMAP_FILE = "/content/alltracker/utils/bremm.png"
 class ColorMap2d:
     def __init__(self, filename=None):
         self._colormap_file = filename or COLORMAP_FILE
