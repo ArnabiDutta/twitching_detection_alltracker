@@ -24,7 +24,7 @@ def read_mp4(name_path):
     vidcap.release()
     return frames, framerate
 
-def draw_pts_gpu(rgbs, trajs, visibs, colormap, rate=1, bkg_opacity=0.5):
+def draw_pts_gpu(rgbs, trajs, visibs, colormap, rate=1, bkg_opacity=0.0):
     device = rgbs.device
     T, C, H, W = rgbs.shape
     trajs = trajs.permute(1,0,2) # N,T,2
@@ -58,47 +58,73 @@ def draw_pts_gpu(rgbs, trajs, visibs, colormap, rate=1, bkg_opacity=0.5):
     dy = torch.arange(-radius, radius + 1, device=device)
     disp_y, disp_x = torch.meshgrid(dy, dx, indexing="ij")  # [D,D]
     for t in range(T):
-        mask = visibs[:, t]  # [N]
-        if mask.sum() == 0:
-            continue
-        xy = trajs[mask, t] + 0.5  # [N,2]
-        xy[:, 0] = xy[:, 0].clamp(0, W - 1)
-        xy[:, 1] = xy[:, 1].clamp(0, H - 1)
-        colors_now = colors[mask]  # [N,3]
-        N = xy.shape[0]
-        cx = xy[:, 0].long()  # [N]
-        cy = xy[:, 1].long()
-        x_grid = cx[:, None, None] + disp_x  # [N,D,D]
-        y_grid = cy[:, None, None] + disp_y  # [N,D,D]
-        valid = (x_grid >= 0) & (x_grid < W) & (y_grid >= 0) & (y_grid < H)
-        x_valid = x_grid[valid]  # [K]
-        y_valid = y_grid[valid]
-        icon_weights = icon.expand(N, D, D)[valid]  # [K]
-        colors_valid = colors_now[:, :, None, None].expand(N, 3, D, D).permute(1, 0, 2, 3)[
-            :, valid
-        ]  # [3, K]
-        idx_flat = (y_valid * W + x_valid).long()  # [K]
+      mask = visibs[:, t]  # [N]
+      if mask.sum() == 0:
+          continue
+      xy = trajs[mask, t] + 0.5  # [N,2]
+      xy[:, 0] = xy[:, 0].clamp(0, W - 1)
+      xy[:, 1] = xy[:, 1].clamp(0, H - 1)
+      colors_now = colors[mask]  # [N,3]
+      N = xy.shape[0]
+      cx = xy[:, 0].long()  # [N]
+      cy = xy[:, 1].long()
+      x_grid = cx[:, None, None] + disp_x  # [N,D,D]
+      y_grid = cy[:, None, None] + disp_y  # [N,D,D]
+      valid = (x_grid >= 0) & (x_grid < W) & (y_grid >= 0) & (y_grid < H)
+      x_valid = x_grid[valid]  # [K]
+      y_valid = y_grid[valid]
+      icon_weights = icon.expand(N, D, D)[valid]  # [K]
+      colors_valid = colors_now[:, :, None, None].expand(N, 3, D, D).permute(1, 0, 2, 3)[
+          :, valid
+      ]  # [3, K]
+      idx_flat = (y_valid * W + x_valid).long()  # [K]
 
-        accum = torch.zeros_like(rgbs[t])  # [3, H, W]
-        weight = torch.zeros(1, H * W, device=device)  # [1, H*W]
-        img_flat = accum.view(C, -1)  # [3, H*W]
-        weighted_colors = colors_valid * icon_weights  # [3, K]
-        img_flat.scatter_add_(1, idx_flat.unsqueeze(0).expand(C, -1), weighted_colors)
-        weight.scatter_add_(1, idx_flat.unsqueeze(0), icon_weights.unsqueeze(0))
-        weight = weight.view(1, H, W)
+      accum = torch.zeros_like(rgbs[t])  # [3, H, W]
+      weight = torch.zeros(1, H * W, device=device)  # [1, H*W]
+      img_flat = accum.view(C, -1)  # [3, H*W]
+      weighted_colors = colors_valid * icon_weights  # [3, K]
+      img_flat.scatter_add_(1, idx_flat.unsqueeze(0).expand(C, -1), weighted_colors)
+      weight.scatter_add_(1, idx_flat.unsqueeze(0), icon_weights.unsqueeze(0))
+      weight = weight.view(1, H, W)
 
-        alpha = weight.clamp(0, 1) * opacity
-        accum = accum / (weight + 1e-6)  # [3, H, W]
-        rgbs[t] = rgbs[t] * (1 - alpha) + accum * alpha
-    rgbs = rgbs.clamp(0, 255).byte().permute(0, 2, 3, 1).cpu().numpy() # T,H,W,3
-    if bkg_opacity==0.0:
+      alpha = weight.clamp(0, 1) * opacity
+      accum = accum / (weight + 1e-6)  # [3, H, W]
+      rgbs[t] = rgbs[t] * (1 - alpha) + accum * alpha
+
+    # Now draw lines connecting trajectory points after rendering the points
+    rgbs_np = rgbs.clamp(0, 255).byte().cpu().numpy()  # shape [T, 3, H, W]
+    import random
+    selected_ids = random.sample(range(trajs.shape[0]), min(250, trajs.shape[0]))
+    for n in selected_ids:
+     # for each trajectory
+        prev_point = None
+        color = (colors[n].cpu().numpy() * 255).astype(np.uint8).tolist()  # [R,G,B]
+        for t in range(T):
+            if not visibs[n, t]:
+                continue
+            x, y = trajs[n, t].cpu().numpy().astype(int)
+            if prev_point is not None:
+              img= np.ascontiguousarray(rgbs_np[t].transpose(1,2,0))
+              cv2.line(img, tuple(prev_point), (x, y), color, 20)
+              rgbs_np[t] = img.transpose(2,0,1)
+            prev_point = (x, y)
+
+    # Convert back to T,H,W,3 format before return
+    rgbs = np.transpose(rgbs_np, (0, 2, 3, 1))  # [T,H,W,3]
+
+    # Optional: boost saturation if background was black
+    if bkg_opacity == 0.0:
         for t in range(T):
             hsv_frame = cv2.cvtColor(rgbs[t], cv2.COLOR_RGB2HSV)
             saturation_factor = 1.5
             hsv_frame[..., 1] = np.clip(hsv_frame[..., 1] * saturation_factor, 0, 255)
             rgbs[t] = cv2.cvtColor(hsv_frame, cv2.COLOR_HSV2RGB)
+    print("[draw_pts_gpu] Final rgbs shape:", rgbs.shape)
+    print("[draw_pts_gpu] Sample pixel value (frame 0):", rgbs[0, 0, 0])
+    print("[draw_pts_gpu] Visibility stats per frame:")
+    for t in range(T):
+        print(f"  Frame {t}: {visibs[:, t].sum().item()} points visible")
     return rgbs
-
 def count_parameters(model):
     table = PrettyTable(["Modules", "Parameters"])
     total_params = 0
@@ -147,6 +173,22 @@ def forward_video(rgbs, framerate, model, args):
     rate = args.rate
     trajs_e = traj_maps_e[:,:,:,::rate,::rate].reshape(B,T,2,-1).permute(0,1,3,2) # B,T,N,2
     visconfs_e = visconf_maps_e[:,:,:,::rate,::rate].reshape(B,T,2,-1).permute(0,1,3,2) # B,T,N,2
+    from plot_trajectories import plot_global_trajectories
+
+    trajs_np = trajs_e[0].cpu().permute(1, 0, 2)  # [N, T, 2]
+    visibs_np = visconfs_e[0,:,:,1].cpu().permute(1, 0).bool()  # [N, T]
+    colors_np = utils.improc.get_2d_colors(trajs_np[:, 0], H, W)  # [N,3] in [0,1]
+
+    plot_global_trajectories(trajs_np, visibs_np, colors_np, H, W, save_path="traj_lines_walking.mp4", fps=framerate)
+    # === Repetition Ratio Plot ===
+    from rep_ratio import compute_repetition_ratio, plot_repetition_ratios
+    ratios = compute_repetition_ratio(trajs_np, visibs_np)
+    plot_repetition_ratios(ratios)
+
+
+    from vel_acc import plot_time_series
+    plot_time_series(trajs_np, visibs_np, framerate)
+
 
     xy0 = trajs_e[0,0].cpu().numpy()
     colors = utils.improc.get_2d_colors(xy0, H, W)
@@ -160,7 +202,9 @@ def forward_video(rgbs, framerate, model, args):
 
     frames = draw_pts_gpu(rgbs[0].to('cuda:0'), trajs_e[0], visconfs_e[0,:,:,1] > args.conf_thr,
                           colors, rate=rate, bkg_opacity=args.bkg_opacity)
-    print('frames', frames.shape)
+    print('[forward_video] frames.shape=', frames.shape)
+    print('[forward_video] saving frames to', temp_dir)
+
 
     if args.vstack:
         frames_top = rgbs[0].clamp(0, 255).byte().permute(0, 2, 3, 1).cpu().numpy() # T,H,W,3
@@ -173,6 +217,7 @@ def forward_video(rgbs, framerate, model, args):
     f_start_time = time.time()
     for ti in range(T):
         temp_out_f = '%s/%03d.jpg' % (temp_dir, ti)
+        print(f"[forward_video] saving frame {ti} to {temp_out_f}")
         im = PIL.Image.fromarray(frames[ti])
         im.save(temp_out_f)#, "PNG", subsampling=0, quality=80)
     ftime = time.time()-f_start_time
@@ -257,12 +302,12 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt_init", type=str, default='') # the ckpt we want (else default)
     parser.add_argument("--mp4_path", type=str, default='./demo_video/monkey.mp4') # input video 
     parser.add_argument("--query_frame", type=int, default=0) # which frame to track from
-    parser.add_argument("--max_frames", type=int, default=400) # trim the video to this length
+    parser.add_argument("--max_frames", type=int, default=100) # trim the video to this length
     parser.add_argument("--inference_iters", type=int, default=4) # number of inference steps per forward
     parser.add_argument("--window_len", type=int, default=16) # model hyperparam
-    parser.add_argument("--rate", type=int, default=2) # vis hyp
+    parser.add_argument("--rate", type=int, default=16) # vis hyp
     parser.add_argument("--conf_thr", type=float, default=0.1) # vis hyp
-    parser.add_argument("--bkg_opacity", type=float, default=0.5) # vis hyp
+    parser.add_argument("--bkg_opacity", type=float, default=0.0) # vis hyp
     parser.add_argument("--vstack", action='store_true', default=False) # whether to stack the input and output in the mp4
     parser.add_argument("--hstack", action='store_true', default=False) # whether to stack the input and output in the mp4
     args = parser.parse_args()
