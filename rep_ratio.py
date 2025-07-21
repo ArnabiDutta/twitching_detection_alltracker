@@ -45,8 +45,8 @@ def plot_repetition_ratios(ratios, save_path="repetition_ratio.png"):
     plt.grid(True)
     plt.ylim(0, 1.1)
     plt.savefig(save_path)
+    plt.close()          # <— frees the figure
     print(f"[Saved] Plot at {save_path}")
-    plt.show()
 
 # Example usage
 # Assuming `trajs_np` is [N, T, 2] and `visibs_np` is [N, T]
