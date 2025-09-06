@@ -1,4 +1,3 @@
-# demo_batch.py
 import torch
 import cv2
 import argparse
@@ -10,30 +9,20 @@ import numpy as np
 import os
 from prettytable import PrettyTable
 import time
-import pandas as pd
-
-# import your existing modules
-from plot_trajectories import plot_global_trajectories
-from rep_ratio import compute_repetition_ratio, plot_repetition_ratios
 
 def read_mp4(name_path):
     vidcap = cv2.VideoCapture(name_path)
     framerate = int(round(vidcap.get(cv2.CAP_PROP_FPS)))
-    print(f"[INFO] '{name_path}' → framerate {framerate}")
+    print('framerate', framerate)
     frames = []
     while vidcap.isOpened():
         ret, frame = vidcap.read()
-        if not ret:
+        if ret == False:
             break
-        frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frames.append(frame)
     vidcap.release()
     return frames, framerate
-
-# --- your draw_pts_gpu() unchanged ---
-def draw_pts_gpu(rgbs, trajs, visibs, colormap, rate=1, bkg_opacity=0.0):
-    # … copy exactly your existing implementation here …
-    # (omitted for brevity)
-    return rgbs
 
 def count_parameters(model):
     table = PrettyTable(["Modules", "Parameters"])
@@ -42,94 +31,129 @@ def count_parameters(model):
         if not parameter.requires_grad:
             continue
         param = parameter.numel()
-        if param > 100_000:
+        if param > 100000:
             table.add_row([name, param])
-        total_params += param
+        total_params+=param
     print(table)
-    print(f"total params: {total_params/1e6:.2f} M")
+    print('total params: %.2f M' % (total_params/1000000.0))
     return total_params
 
 def forward_video(rgbs, framerate, model, args, basename):
     B,T,C,H,W = rgbs.shape
+    assert C == 3
     device = rgbs.device
-    # … same forward logic up through computing trajs_np & visibs_np …
-    # For brevity, assume trajs_np, visibs_np are now:
-    #   trajs_np: [N, T, 2] np.ndarray
-    #   visibs_np: [N, T] bool np.ndarray
+    assert(B==1)
 
-    # 1) save trajectory-only video
-    traj_vid = os.path.join("results", f"{basename}_trajectories.mp4")
-    plot_global_trajectories(trajs_np, visibs_np, 
-                             utils.improc.get_2d_colors(trajs_np[:,0], H, W),
-                             H, W,
-                             save_path=traj_vid,
-                             fps=framerate)
+    grid_xy = utils.basic.gridcloud2d(1, H, W, norm=False, device='cuda:0').float()
+    grid_xy = grid_xy.permute(0,2,1).reshape(1,1,2,H,W)
 
-    # 2) compute & save repetition ratio CSV + plot PNG
+    torch.cuda.empty_cache()
+    print('starting forward...')
+    f_start_time = time.time()
+
+    flows_e, visconf_maps_e, _, _ = \
+        model(rgbs[:, args.query_frame:], iters=args.inference_iters, sw=None, is_training=False)
+    traj_maps_e = flows_e + grid_xy
+    if args.query_frame > 0:
+        backward_flows_e, backward_visconf_maps_e, _, _ = \
+            model(rgbs[:, :args.query_frame+1].flip([1]), iters=args.inference_iters, sw=None, is_training=False)
+        backward_traj_maps_e = backward_flows_e + grid_xy
+        backward_traj_maps_e = backward_traj_maps_e.flip([1])[:, :-1]
+        backward_visconf_maps_e = backward_visconf_maps_e.flip([1])[:, :-1]
+        traj_maps_e = torch.cat([backward_traj_maps_e, traj_maps_e], dim=1)
+        visconf_maps_e = torch.cat([backward_visconf_maps_e, visconf_maps_e], dim=1)
+    ftime = time.time()-f_start_time
+    print('finished forward; %.2f seconds / %d frames; %d fps' % (ftime, T, round(T/ftime)))
+    utils.basic.print_stats('traj_maps_e', traj_maps_e)
+    utils.basic.print_stats('visconf_maps_e', visconf_maps_e)
+
+    rate = args.rate
+    trajs_e = traj_maps_e[:,:,:,::rate,::rate].reshape(B,T,2,-1).permute(0,1,3,2)
+    visconfs_e = visconf_maps_e[:,:,:,::rate,::rate].reshape(B,T,2,-1).permute(0,1,3,2)
+
+    trajs_np = trajs_e[0].cpu().permute(1, 0, 2)  # [N, T, 2]
+    visibs_np = visconfs_e[0,:,:,1].cpu().permute(1, 0).bool()  # [N, T]
+
+    # === Repetition Ratio Plot ===
+    from rep_ratio import compute_repetition_ratio, plot_repetition_ratios
     ratios = compute_repetition_ratio(trajs_np, visibs_np)
-    # raw CSV
-    df = pd.DataFrame({
-        "track_id": np.arange(len(ratios)),
-        "repetition_ratio": ratios
-    })
-    csv_path = os.path.join("results", f"{basename}_repetition_ratio.csv")
-    df.to_csv(csv_path, index=False)
-    # plot PNG
-    png_path = os.path.join("results", f"{basename}_repetition_ratio.png")
-    plot_repetition_ratios(ratios, save_path=png_path)
+    out_png = os.path.join("results", f"{basename}_repetition_ratio.png")
+    plot_repetition_ratios(ratios, save_path=out_png)
+    print(f"[forward_video] Saved repetition ratio plot → {out_png}")
 
-    # 3) now your original overlay video (optional—comment out if you only want the tra j video)
-    # … your existing code that calls draw_pts_gpu() and writes the mp4 …
+    return None
 
-def run_on_folder(model, args):
+def run(model, args):
+    if args.ckpt_init:
+        _ = utils.saveload.load(
+            None,
+            args.ckpt_init,
+            model,
+            optimizer=None,
+            scheduler=None,
+            ignore_load=None,
+            strict=True,
+            verbose=False,
+            weights_only=False,
+        )
+        print('loaded weights from', args.ckpt_init)
+    else:
+        url = "https://huggingface.co/aharley/alltracker/resolve/main/alltracker.pth"
+        state_dict = torch.hub.load_state_dict_from_url(url, map_location='cpu')
+        model.load_state_dict(state_dict['model'], strict=True)
+        print('loaded weights from', url)
+
+    model.cuda()
+    for n, p in model.named_parameters():
+        p.requires_grad = False
+    model.eval()
+
     os.makedirs("results", exist_ok=True)
-    for fname in sorted(os.listdir(args.cropped_folder)):
+
+    for fname in sorted(os.listdir(args.videos_folder)):
         if not fname.lower().endswith(".mp4"):
             continue
-        path = os.path.join(args.cropped_folder, fname)
+        path = os.path.join(args.videos_folder, fname)
         basename = os.path.splitext(fname)[0]
         print(f"\n=== Processing {fname} ===")
-        frames, fps = read_mp4(path)
-        # shrink & stack exactly as before
+
+        rgbs, framerate = read_mp4(path)
+        H,W = rgbs[0].shape[:2]
+
         if args.max_frames:
-            frames = frames[: args.max_frames]
-        H0,W0 = frames[0].shape[:2]
-        scale = min(1024/H0, 1024/W0)
-        H,W = int(H0*scale)//8*8, int(W0*scale)//8*8
-        frames = [cv2.resize(f, (W,H)) for f in frames]
-        # to tensor
-        rgbs = torch.stack(
-            [torch.from_numpy(f).permute(2,0,1) for f in frames],
-            dim=0
-        ).unsqueeze(0).float().cuda()
-        forward_video(rgbs, fps, model, args, basename)
+            rgbs = rgbs[:args.max_frames]
+        HH = 1024
+        scale = min(HH/H, HH/W)
+        H, W = int(H*scale), int(W*scale)
+        H, W = H//8 * 8, W//8 * 8
+        rgbs = [cv2.resize(rgb, dsize=(W, H), interpolation=cv2.INTER_LINEAR) for rgb in rgbs]
+
+        rgbs = [torch.from_numpy(rgb).permute(2,0,1) for rgb in rgbs]
+        rgbs = torch.stack(rgbs, dim=0).unsqueeze(0).float()
+
+        with torch.no_grad():
+            forward_video(rgbs, framerate, model, args, basename)
+
+    return None
 
 if __name__ == "__main__":
     torch.set_grad_enabled(False)
+
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ckpt_init", type=str, default="")
-    parser.add_argument("--cropped_folder", type=str, default="cropped_videos")
+    parser.add_argument("--ckpt_init", type=str, default='')
+    parser.add_argument("--videos_folder", type=str, default='./demo_video')
+    parser.add_argument("--query_frame", type=int, default=0)
     parser.add_argument("--max_frames", type=int, default=100)
     parser.add_argument("--inference_iters", type=int, default=4)
     parser.add_argument("--window_len", type=int, default=16)
     parser.add_argument("--rate", type=int, default=16)
     parser.add_argument("--conf_thr", type=float, default=0.1)
     parser.add_argument("--bkg_opacity", type=float, default=0.0)
-    parser.add_argument("--vstack", action="store_true")
-    parser.add_argument("--hstack", action="store_true")
+    parser.add_argument("--vstack", action='store_true', default=False)
+    parser.add_argument("--hstack", action='store_true', default=False)
     args = parser.parse_args()
 
-    # load model once
-    from nets.alltracker import Net
-    model = Net(args.window_len).cuda().eval()
-    if args.ckpt_init:
-        utils.saveload.load(None, args.ckpt_init, model, None, None, None, True, False)
-    else:
-        url = "https://huggingface.co/aharley/alltracker/resolve/main/alltracker.pth"
-        sd = torch.hub.load_state_dict_from_url(url, map_location="cpu")
-        model.load_state_dict(sd["model"], strict=True)
-    for p in model.parameters():
-        p.requires_grad = False
+    from nets.alltracker import Net; model = Net(args.window_len)
     count_parameters(model)
 
-    run_on_folder(model, args)
+    run(model, args)
