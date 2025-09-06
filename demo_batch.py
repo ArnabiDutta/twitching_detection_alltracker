@@ -122,7 +122,7 @@ def run(model, args):
 
         if args.max_frames:
             rgbs = rgbs[:args.max_frames]
-        HH = 1024
+        HH = 512
         scale = min(HH/H, HH/W)
         H, W = int(H*scale), int(W*scale)
         H, W = H//8 * 8, W//8 * 8
