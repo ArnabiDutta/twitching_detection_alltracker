@@ -216,7 +216,7 @@ def forward_video(rgbs, framerate, model, args, basename):
 
     # Convert to final mp4
     rgb_out_f = f'./pt_vis_{basename}_rate{rate}_q{args.query_frame}.mp4'
-    os.system(f'/usr/bin/ffmpeg -y -hide_banner -loglevel error -f image2 -framerate {framerate} -pattern_type glob -i "./{temp_dir}/*.jpg" -c:v libx264 -crf 20 -pix_fmt yuv420p {rgb_out_f}')
+    os.system(f'/usr/bin/ffmpeg -y -hide_banner -loglevel error -f image2 -framerate {framerate} -pattern_type glob -i "./{temp_dir}/*.jpg" -c:v libx264 -crf 20 -pix_fmt yuv420p "{rgb_out_f}"')
     print(f"[forward_video] Saved final overlay video → {rgb_out_f}")
 
     return None
@@ -285,9 +285,9 @@ if __name__ == "__main__":
     parser.add_argument("--max_frames", type=int, default=100)
     parser.add_argument("--inference_iters", type=int, default=4)
     parser.add_argument("--window_len", type=int, default=16)
-    parser.add_argument("--rate", type=int, default=16)
+    parser.add_argument("--rate", type=int, default=2)
     parser.add_argument("--conf_thr", type=float, default=0.1)
-    parser.add_argument("--bkg_opacity", type=float, default=0.0)
+    parser.add_argument("--bkg_opacity", type=float, default=0.7)
     parser.add_argument("--vstack", action='store_true', default=False)
     parser.add_argument("--hstack", action='store_true', default=False)
     args = parser.parse_args()
