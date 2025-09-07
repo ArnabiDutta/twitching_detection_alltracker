@@ -44,7 +44,7 @@ def draw_pts_gpu(rgbs, trajs, visibs, colormap, rate=1, bkg_opacity=0.0):
     trajs = trajs.permute(1,0,2) # N,T,2
     visibs = visibs.permute(1,0) # N,T
     N = trajs.shape[0]
-    colors = torch.tensor(colormap, dtype=torch.float32, device=device)  # [N,3]
+    colors = torch.tensor(colormap, dtype=torch.float32, device=device) / 255.0  # [N,3], normalize
 
     rgbs = rgbs * bkg_opacity # darken, to see the point tracks better
     
@@ -183,8 +183,10 @@ def forward_video(rgbs, framerate, model, args, basename):
     mask_keep = (ratios >= 0.6) & ~np.isnan(ratios)
     trajs_e = trajs_e[:, :, mask_keep, :]
     visconfs_e = visconfs_e[:, :, mask_keep, :]
-    colors = np.ones((mask_keep.sum(), 3), dtype=np.float32)
-    colors[:, :] = [1.0, 0.0, 0.0]
+    # Use uint8 with 0-255 values (RGB red)
+    colors = np.zeros((mask_keep.sum(), 3), dtype=np.uint8)
+    colors[:, :] = [255, 0, 0]  # bright red in RGB
+
     # === Draw points & trajectories on video frames ===
     frames = draw_pts_gpu(rgbs[0].to('cuda:0'), trajs_e[0], visconfs_e[0,:,:,1] > args.conf_thr,
                           colors, rate=rate, bkg_opacity=args.bkg_opacity)
