@@ -180,18 +180,11 @@ def forward_video(rgbs, framerate, model, args, basename):
     # === Map ratios to colors (R=red, Y=yellow, G=green) ===
     colors = []
     mask_keep = []
-    for r in ratios:
-        if not np.isnan(r) and r >= 0.6:   # high repetition threshold
-            colors.append([255, 0, 0])     # red
-            mask_keep.append(True)
-        else:
-            colors.append([0, 0, 0])       # invisible / black
-            mask_keep.append(False)
-    colors = np.array(colors, dtype=np.float32) / 255.0
-    mask_keep = np.array(mask_keep)
-    trajs_e = trajs_e[:, :, mask_keep, :]          # [B, T, N_red, 2]
-    visconfs_e = visconfs_e[:, :, mask_keep, :]    # [B, T, N_red, 2]
-    colors = colors[mask_keep]                     # [N_red, 3]
+    mask_keep = (ratios >= 0.6) & ~np.isnan(ratios)
+    trajs_e = trajs_e[:, :, mask_keep, :]
+    visconfs_e = visconfs_e[:, :, mask_keep, :]
+    colors = np.ones((mask_keep.sum(), 3), dtype=np.float32)
+    colors[:, :] = [1.0, 0.0, 0.0]
     # === Draw points & trajectories on video frames ===
     frames = draw_pts_gpu(rgbs[0].to('cuda:0'), trajs_e[0], visconfs_e[0,:,:,1] > args.conf_thr,
                           colors, rate=rate, bkg_opacity=args.bkg_opacity)
