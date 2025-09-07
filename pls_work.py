@@ -144,17 +144,20 @@ def compute_repetition_ratio(
         p_len, n_disp = _path_len_and_net_disp(traj_rel_vis)
         path_len_rel[n] = p_len
         net_disp_rel[n] = n_disp
-
-        if p_len < eps and n_disp < eps:
-            # basically static relative to body
-            raw = 1.0  # treat as smooth → normalized ~0 after mapping below
-        else:
-            raw = (p_len + eps) / (n_disp + eps)
+        # Handle static or background cases
+        if p_len < 1e-3 and n_disp < 1e-3:
+            ratios_norm[n] = 0.0   # treat as smooth
+            continue
+        if n_disp < 1.0:  # very low displacement = probably static background
+            continue
+        
+        raw = (p_len + eps) / (n_disp + eps)
         raw_ratio[n] = raw
-
-        # Normalize from [1 .. max_cap] → [0 .. 1]
-        raw_clipped = min(max_cap, max(1.0, raw))
+        
+        # Map so that raw≈1 → 0 (smooth), raw≫1 → 1 (repetitive)
+        raw_clipped = min(max_cap, raw)
         ratios_norm[n] = (raw_clipped - 1.0) / (max_cap - 1.0)
+        ratios_norm[n] = max(0.0, ratios_norm[n])  # keep in [0,1]
 
     if return_debug:
         return ratios_norm, {
