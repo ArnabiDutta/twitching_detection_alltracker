@@ -172,7 +172,14 @@ def forward_video(rgbs, framerate, model, args, basename):
 
     # === Repetition Ratio Plot ===
     from path_by_disp import compute_repetition_ratio, plot_repetition_ratios
-    ratios = compute_repetition_ratio(trajs_np, visibs_np)
+    ratios = compute_repetition_ratio(
+    trajs_np, visibs_np,
+    max_cap=5.0,          # same semantics as before
+    min_visible=5,        # ignore very short tracks
+    com_method="median",  # robust center
+    com_smooth_sigma=0.1, # you can set to 1–2 if camera jitter
+    per_point_smooth_sigma=0.0
+)
     out_png = os.path.join("results_yolo", f"{basename}_repetition_ratio.png")
     plot_repetition_ratios(ratios, save_path=out_png)
     print(f"[forward_video] Saved repetition ratio plot → {out_png}")
