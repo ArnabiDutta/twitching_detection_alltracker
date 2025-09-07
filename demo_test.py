@@ -277,7 +277,7 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt_init", type=str, default='')
     parser.add_argument("--videos_folder", type=str, default='./demo_video')
     parser.add_argument("--query_frame", type=int, default=0)
-    parser.add_argument("--max_frames", type=int, default=100)
+    parser.add_argument("--max_frames", type=int, default=500)
     parser.add_argument("--inference_iters", type=int, default=4)
     parser.add_argument("--window_len", type=int, default=16)
     parser.add_argument("--rate", type=int, default=2)
