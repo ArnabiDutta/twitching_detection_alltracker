@@ -6,7 +6,6 @@ import utils.basic
 import utils.improc
 import PIL.Image
 import numpy as np
-from ultralytics import YOLO
 import os
 from prettytable import PrettyTable
 import time
