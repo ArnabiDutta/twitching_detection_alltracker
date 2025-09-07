@@ -44,7 +44,7 @@ def draw_pts_gpu(rgbs, trajs, visibs, colormap, rate=1, bkg_opacity=0.0):
     trajs = trajs.permute(1,0,2) # N,T,2
     visibs = visibs.permute(1,0) # N,T
     N = trajs.shape[0]
-    colors = torch.tensor(colormap, dtype=torch.float32, device=device) / 255.0  # [N,3], normalize
+    colors = torch.tensor(colormap, dtype=torch.float32, device=device)  # [N,3], normalize
 
     rgbs = rgbs * bkg_opacity # darken, to see the point tracks better
     
