@@ -42,8 +42,7 @@ def draw_twitching_visualization(rgbs, trajs, visibs, rate=1):
     T, C, H, W = rgbs.shape
     
     # --- THIS IS THE CORRECTED LINE ---
-    output_rgbs = torch.zeros((T, C, H, W), device=device, dtype=torch.float32)
-
+    output_rgbs = rgbs.clone().to(device=device, dtype=torch.float32)
     # Prepare trajectory data
     trajs = trajs.permute(1,0,2) # N,T,2
     visibs = visibs.permute(1,0) # N,T
