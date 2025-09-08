@@ -10,7 +10,7 @@ from ultralytics import YOLO
 import os
 from prettytable import PrettyTable
 import time
-from motion_analyzer import compute_motion_metrics, plot_motion_analysis
+from sliding_window import compute_motion_metrics, plot_motion_analysis
 
 
 def read_mp4(name_path):
@@ -32,15 +32,17 @@ def draw_twitching_visualization(rgbs, trajs, visibs, rate=1):
     on a black background to highlight twitching motion.
     
     Args:
-        rgbs (torch.Tensor): A tensor of video frames (will be ignored for black bkg).
+        rgbs (torch.Tensor): A tensor of video frames (used for shape info).
         trajs (torch.Tensor): The trajectories of twitching points [T, N, 2].
         visibs (torch.Tensor): Visibility data for the twitching points [T, N].
         rate (int): The subsampling rate used.
     """
     device = trajs.device
-    # Force a black background by creating a new tensor
+    # Force a black background by creating a new tensor on the correct device
     T, C, H, W = rgbs.shape
-    output_rgbs = torch.zeros_like(rgbs)
+    
+    # --- THIS IS THE CORRECTED LINE ---
+    output_rgbs = torch.zeros((T, C, H, W), device=device, dtype=torch.float32)
 
     # Prepare trajectory data
     trajs = trajs.permute(1,0,2) # N,T,2
@@ -99,7 +101,7 @@ def draw_twitching_visualization(rgbs, trajs, visibs, rate=1):
 
     # --- Now, draw lines connecting the trajectory points ---
     # Convert to NumPy for cv2 line drawing
-    output_rgbs_np = output_rgbs.clamp(0, 255).byte().permute(0, 2, 3, 1).cpu().numpy()
+    output_rgbs_np = np.ascontiguousarray(output_rgbs.clamp(0, 255).byte().permute(0, 2, 3, 1).cpu().numpy())    
     line_color_bgr = (50, 50, 255) # BGR format for OpenCV
     
     for n in range(N): # For each trajectory
@@ -238,7 +240,7 @@ def forward_video(rgbs, framerate, model, args, basename):
             temp_out_f = os.path.join(temp_dir, f"{ti:04d}.jpg")
             PIL.Image.fromarray(frame).save(temp_out_f)
         
-        os.system(f'/usr/bin/ffmpeg -y -hide_banner -loglevel error -f image2 -framerate {framerate} -pattern_type glob -i "./{temp_dir}/*.jpg" -c:v libx264 -crf 20 -pix_fmt yuv420p {vid_out_f}')
+        os.system(f'/usr/bin/ffmpeg -y -hide_banner -loglevel error -f image2 -framerate {framerate} -pattern_type glob -i "./{temp_dir}/*.jpg" -c:v libx264 -crf 20 -pix_fmt yuv420p "{vid_out_f}"')
         print("Done.")
 
     else:
@@ -309,12 +311,12 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt_init", type=str, default='')
     parser.add_argument("--videos_folder", type=str, default='./demo_video')
     parser.add_argument("--query_frame", type=int, default=0)
-    parser.add_argument("--max_frames", type=int, default=100)
+    parser.add_argument("--max_frames", type=int, default=1000)
     parser.add_argument("--inference_iters", type=int, default=4)
     parser.add_argument("--window_len", type=int, default=16)
     parser.add_argument("--rate", type=int, default=16)
     parser.add_argument("--conf_thr", type=float, default=0.1)
-    parser.add_argument("--bkg_opacity", type=float, default=0.0)
+    parser.add_argument("--bkg_opacity", type=float, default=0.7)
     parser.add_argument("--vstack", action='store_true', default=False)
     parser.add_argument("--hstack", action='store_true', default=False)
     args = parser.parse_args()
