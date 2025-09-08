@@ -4,39 +4,72 @@ import matplotlib.pyplot as plt
 # --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
 # 1. THRESHOLDS & CONFIGURATION
 # --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
-# Global thresholds
-THRESH_PATH_NOMOVE = 10.0
+# In motion_analyzer.py, place this code.
 
-# Sliding Window Configuration
+# --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
+# NEW HELPER FUNCTION - Place this right above compute_motion_metrics
+# --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
+def _find_longest_contig_segment(bool_arr):
+    """Finds the start and end index of the longest contiguous block of True."""
+    max_len = 0
+    best_start = -1
+    current_len = 0
+    current_start = -1
+    for i, val in enumerate(bool_arr):
+        if val:
+            if current_len == 0:
+                current_start = i
+            current_len += 1
+        else:
+            if current_len > max_len:
+                max_len = current_len
+                best_start = current_start
+            current_len = 0
+    if current_len > max_len:
+        max_len = current_len
+        best_start = current_start
+    
+    if best_start == -1:
+        return 0, 0
+    return best_start, best_start + max_len
+
+
+# --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
+# 1. THRESHOLDS & CONFIGURATION
+# --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
+THRESH_PATH_NOMOVE = 10.0
 WINDOW_SIZE = 15
 STEP_SIZE = 5
-
-# Classification thresholds
 THRESH_MAX_DR_TWITCH = 10.0
 THRESH_MEAN_DR_WALK = 2.5
-# THRESHOLD FOR THE "CONTEXT" RULE
 THRESH_WINDOW_PATH_CALM = 5.0
-# *** NEW THRESHOLD TO PREVENT FALSE POSITIVES FROM NOISE ***
-THRESH_WINDOW_PATH_SIGNIFICANT = 8.0 # (pixels) The spike itself must have at least this much movement.
-
+THRESH_WINDOW_PATH_SIGNIFICANT = 8.0
 EPSILON = 1e-6
 
+
+# --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
+# REPLACE your old compute_motion_metrics with THIS NEW VERSION
+# --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
 def compute_motion_metrics(trajs_np, visibs_np, framerate=30):
     """
-    Analyzes trajectories using a sliding window and contextual analysis,
-    now with a magnitude check to reject low-amplitude noise.
+    Final robust version: Analyzes the longest contiguous visible segment
+    to handle intermittent occlusions.
     """
     N, T, _ = trajs_np.shape
     analysis_results = []
 
     for n in range(N):
-        traj = trajs_np[n]
-        vis = visibs_np[n]
-        traj_vis = traj[vis]
+        vis_arr = visibs_np[n] # The full visibility array for point n
 
-        if len(traj_vis) < WINDOW_SIZE:
+        # --- NEW LOGIC: Analyze only the best contiguous segment ---
+        start, end = _find_longest_contig_segment(vis_arr)
+        
+        if (end - start) < WINDOW_SIZE:
             analysis_results.append({'id': n, 'label': 'Invalid', 'global_path_len': np.nan})
             continue
+
+        # Use ONLY the contiguous, visible trajectory for all further calculations
+        traj_vis = trajs_np[n, start:end]
 
         global_path_len = np.sum(np.linalg.norm(np.diff(traj_vis, axis=0), axis=1))
 
@@ -52,9 +85,9 @@ def compute_motion_metrics(trajs_np, visibs_np, framerate=30):
         num_windows = (len(traj_vis) - WINDOW_SIZE) // STEP_SIZE + 1
 
         for i in range(num_windows):
-            start = i * STEP_SIZE
-            end = start + WINDOW_SIZE
-            window_traj = traj_vis[start:end]
+            win_start = i * STEP_SIZE
+            win_end = win_start + WINDOW_SIZE
+            window_traj = traj_vis[win_start:win_end]
 
             if len(window_traj) < 2: continue
 
@@ -76,22 +109,15 @@ def compute_motion_metrics(trajs_np, visibs_np, framerate=30):
         max_dr = np.max(local_directness_ratios)
         std_dr = np.std(local_directness_ratios)
 
-        # --- --- --- --- --- --- --- --- --- ---
-        # FINAL, MOST ROBUST CLASSIFICATION LOGIC
-        # --- --- --- --- --- --- --- --- --- ---
         label = ''
         is_a_twitch = False
         if max_dr > THRESH_MAX_DR_TWITCH:
             max_dr_idx = np.argmax(local_directness_ratios)
             
-            # Condition 1: Is the spike's MAGNITUDE significant?
             is_significant = window_path_lengths[max_dr_idx] > THRESH_WINDOW_PATH_SIGNIFICANT
-
-            # Condition 2: Is the spike ISOLATED? (calm before and after)
             is_calm_before = True
             if max_dr_idx > 0:
                 is_calm_before = window_path_lengths[max_dr_idx - 1] < THRESH_WINDOW_PATH_CALM
-            
             is_calm_after = True
             if max_dr_idx < len(window_path_lengths) - 1:
                 is_calm_after = window_path_lengths[max_dr_idx + 1] < THRESH_WINDOW_PATH_CALM
@@ -112,7 +138,6 @@ def compute_motion_metrics(trajs_np, visibs_np, framerate=30):
         })
 
     return analysis_results
-
 
 def plot_motion_analysis(results, save_path="motion_analysis.png"):
     """
