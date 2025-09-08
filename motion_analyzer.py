@@ -5,9 +5,9 @@ import matplotlib.pyplot as plt
 # 1. THRESHOLDS & CONFIGURATION
 # These values are your main knobs for tuning the classification.
 # --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
-THRESH_PATH_NOMOVE = 2.0     # (pixels) If total path is less than this, it's "No Movement".
+THRESH_PATH_NOMOVE = 10.0     # (pixels) If total path is less than this, it's "No Movement".
 THRESH_DR_TWITCH = 8.0       # (unitless) If Directness Ratio is > this, it's "Twitching".
-THRESH_ACCEL_TWITCH = 5.0    # (pixels/frame^2) If max accel is > this, it's also "Twitching".
+THRESH_ACCEL_TWITCH = 25.0    # (pixels/frame^2) If max accel is > this, it's also "Twitching".
 EPSILON = 1e-6               # A small number to prevent division by zero.
 
 
