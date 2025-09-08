@@ -1,5 +1,5 @@
-# --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
-# In motion_analyzer.py
+import numpy as np
+import matplotlib.pyplot as plt
 
 # --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
 # 1. THRESHOLDS & CONFIGURATION
@@ -20,7 +20,6 @@ THRESH_WINDOW_PATH_CALM = 5.0
 THRESH_WINDOW_PATH_SIGNIFICANT = 8.0 # (pixels) The spike itself must have at least this much movement.
 
 EPSILON = 1e-6
-
 
 def compute_motion_metrics(trajs_np, visibs_np, framerate=30):
     """
@@ -114,4 +113,68 @@ def compute_motion_metrics(trajs_np, visibs_np, framerate=30):
 
     return analysis_results
 
-# NOTE: The plot_motion_analysis function does not need to be changed.
+
+def plot_motion_analysis(results, save_path="motion_analysis.png"):
+    """
+    Generates a multi-panel plot to visualize the new sliding window analysis.
+    (This function does not need to be changed)
+    """
+    if not results:
+        print("No results to plot.")
+        return
+
+    valid_results = [r for r in results if r['label'] != 'Invalid']
+    if not valid_results:
+        print("No valid points to plot.")
+        return
+
+    ids = [r['id'] for r in valid_results]
+    labels = np.array([r['label'] for r in valid_results])
+    mean_drs = np.array([r['mean_dr'] for r in valid_results])
+    max_drs = np.array([r['max_dr'] for r in valid_results])
+
+    color_map = {
+        'No Movement': 'blue',
+        'Walking': 'green',
+        'Twitching': 'red',
+        'General Movement': 'purple',
+    }
+    
+    fig, axes = plt.subplots(2, 1, figsize=(12, 10), sharex=False)
+    fig.suptitle("Sliding Window Motion Analysis", fontsize=16)
+
+    ax1 = axes[0]
+    for label, color in color_map.items():
+        mask = labels == label
+        if np.any(mask):
+            ax1.scatter(mean_drs[mask], max_drs[mask], c=color, label=label, s=50, alpha=0.7, edgecolors='black')
+    
+    ax1.set_title("Per-Point Classification (Mean vs. Max Directness Ratio)")
+    ax1.set_xlabel("Mean Directness Ratio (across all windows)")
+    ax1.set_ylabel("Max Directness Ratio (in any single window)")
+    ax1.grid(True, which="both", ls="--")
+    ax1.legend()
+    ax1.set_xscale('log')
+    ax1.set_yscale('log')
+    ax1.axhline(y=THRESH_MAX_DR_TWITCH, color='red', linestyle='--', label=f'Twitch Max DR Threshold')
+    ax1.axvline(x=THRESH_MEAN_DR_WALK, color='green', linestyle='--', label=f'Walking Mean DR Threshold')
+    ax1.legend()
+
+    ax2 = axes[1]
+    unique_labels = sorted(list(color_map.keys()))
+    bar_width = 0.8
+    for i, label in enumerate(unique_labels):
+        mask = labels == label
+        if np.any(mask):
+            ax2.bar(np.array(ids)[mask], 1, color=color_map[label], label=label, width=bar_width)
+
+    ax2.set_title("Final Classification per Keypoint ID")
+    ax2.set_xlabel("Keypoint ID")
+    ax2.set_yticks([])
+    ax2.set_ylabel("Classification")
+    ax2.legend()
+    
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.savefig(save_path)
+    plt.close()
+    print(f"[Saved] Motion analysis plot at {save_path}")
