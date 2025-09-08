@@ -44,6 +44,7 @@ def get_person_masks(frames):
     Returns: np.array of shape [T, H, W] with binary person masks.
     """
     masks = []
+    kernel = np.ones((5, 5), np.uint8)
     for frame in frames:
         results = yolo_model(frame, verbose=False)
         mask = np.zeros(frame.shape[:2], dtype=np.uint8)
@@ -54,6 +55,8 @@ def get_person_masks(frames):
                 if int(cls_id) == 0:  # class 0 = person
                     poly = np.array([seg], dtype=np.int32)
                     cv2.fillPoly(mask, poly, 1)
+        mask = cv2.erode(mask, kernel, iterations=1)  # Removes noisy edges
+        mask = cv2.dilate(mask, kernel, iterations=1) # Fills holes and restores size
 
         masks.append(mask)
     return np.stack(masks, axis=0)  # [T, H, W]
